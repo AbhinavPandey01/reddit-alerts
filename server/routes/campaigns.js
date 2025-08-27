@@ -20,10 +20,10 @@ router.post('/', async (req, res) => {
     // Initialize RAG knowledge base for the new campaign
     try {
       console.log(`🔍 Initializing RAG knowledge base for campaign ${campaign.id}`);
-      await ragService.initializeCampaignKnowledge(
+      await ragService.initializeCampaignWithSeed(
         campaign.id, 
-        search_prompt || campaign.search_prompt, 
-        description
+        description,
+        search_prompt || campaign.search_prompt
       );
       console.log(`✅ RAG knowledge base initialized for campaign ${campaign.id}`);
     } catch (ragError) {
@@ -113,6 +113,7 @@ router.delete('/:id', async (req, res) => {
     
     // Delete campaign and related data
     await db.runAsync('DELETE FROM responses WHERE post_id IN (SELECT id FROM posts WHERE campaign_id = ?)', [campaignId]);
+    await db.runAsync('DELETE FROM starred_matches WHERE campaign_id = ?', [campaignId]);
     await db.runAsync('DELETE FROM posts WHERE campaign_id = ?', [campaignId]);
     await db.runAsync('DELETE FROM campaigns WHERE id = ?', [campaignId]);
     

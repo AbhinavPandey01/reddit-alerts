@@ -4,6 +4,29 @@ import PostList from './PostList'
 import PostDetail from './PostDetail'
 import SettingsModal from './SettingsModal'
 
+// Custom hook for localStorage persistence
+const useLocalStorage = (key, defaultValue) => {
+  const [value, setValue] = useState(() => {
+    try {
+      const item = window.localStorage.getItem(key)
+      return item ? JSON.parse(item) : defaultValue
+    } catch (error) {
+      return defaultValue
+    }
+  })
+
+  const setStoredValue = (newValue) => {
+    try {
+      setValue(newValue)
+      window.localStorage.setItem(key, JSON.stringify(newValue))
+    } catch (error) {
+      console.error(`Error saving to localStorage:`, error)
+    }
+  }
+
+  return [value, setStoredValue]
+}
+
 function Dashboard({ campaign, campaigns, onCampaignSelect, onNewCampaign, onCampaignDelete }) {
   const [posts, setPosts] = useState([])
   const [selectedPost, setSelectedPost] = useState(null)
@@ -14,8 +37,9 @@ function Dashboard({ campaign, campaigns, onCampaignSelect, onNewCampaign, onCam
   const [deletingCampaign, setDeletingCampaign] = useState(null)
   
   // Filters
-  const [relevanceFilter, setRelevanceFilter] = useState(60)
-  const [subredditFilter, setSubredditFilter] = useState('')
+  const [relevanceFilter, setRelevanceFilter] = useLocalStorage('reddit-alerts-relevance-filter', 60)
+  const [subredditFilter, setSubredditFilter] = useLocalStorage('reddit-alerts-subreddit-filter', '')
+  const [sortBy, setSortBy] = useLocalStorage('reddit-alerts-sort-by', 'relevance')
 
   useEffect(() => {
     loadData()
@@ -193,8 +217,10 @@ function Dashboard({ campaign, campaigns, onCampaignSelect, onNewCampaign, onCam
                 subreddits={subreddits}
                 relevanceFilter={relevanceFilter}
                 subredditFilter={subredditFilter}
+                sortBy={sortBy}
                 onRelevanceChange={setRelevanceFilter}
                 onSubredditChange={setSubredditFilter}
+                onSortChange={setSortBy}
                 onPostSelect={handlePostSelect}
                 loading={loading}
               />

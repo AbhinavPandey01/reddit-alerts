@@ -183,57 +183,204 @@ SUBREDDIT: ${post.subreddit.display_name}
   }
 
   /**
-   * Initialize campaign collection with seed examples
+   * Initialize campaign collection with seed document
    * @param {string} campaignId - Campaign identifier
-   * @param {string} searchCriteria - Campaign search criteria
    * @param {string} productDescription - Product description
-   * @returns {Promise<{success: boolean, error?: string}>}
+   * @param {string} searchCriteria - Campaign search criteria
+   * @returns {Promise<{success: boolean, seedDocumentId?: string, error?: string}>}
    */
-  async initializeCampaignKnowledge(campaignId, searchCriteria, productDescription) {
+  async initializeCampaignWithSeed(campaignId, productDescription, searchCriteria) {
     try {
       const collectionName = `campaign_${campaignId}`;
+      const seedDocumentId = `seed_${campaignId}`;
       
-      // Create seed examples based on search criteria and product description
-      const seedExamples = [
-        {
-          id: `seed_positive_${campaignId}`,
-          content: `
-SEARCH CRITERIA: ${searchCriteria}
+      // Create comprehensive seed document
+      const seedContent = `
+PRODUCT: ${productDescription}
 
-EXAMPLE POSITIVE POST:
-Title: Looking for ${productDescription.toLowerCase()} solution
-Content: I need help with ${searchCriteria.toLowerCase()}. Any recommendations?
-Subreddit: relevant_community
-          `.trim(),
+INTENT QUERY: Which are matching posts in which the person is actively or passively looking for this solution, or depicts a positive intent for the product?
+
+IDEAL POST CHARACTERISTICS:
+- Shows explicit need for the solution
+- Asks for recommendations in relevant products  
+- Expresses frustration with current alternatives
+- Demonstrates buying intent or evaluation phase
+
+SEARCH CRITERIA: ${searchCriteria}
+      `.trim();
+
+      const embedRequest = {
+        collection_name: collectionName,
+        document: {
+          id: seedDocumentId,
+          content: seedContent,
           metadata: {
-            type: 'seed_positive',
+            type: 'seed_document',
             campaign_id: campaignId,
+            product_description: productDescription,
+            search_criteria: searchCriteria,
             created_at: new Date().toISOString()
           }
         }
-      ];
+      };
 
-      // Embed seed examples
-      for (const example of seedExamples) {
-        const embedRequest = {
-          collection_name: collectionName,
-          document: example
-        };
+      const response = await fetch(`${this.baseUrl}/api/embed`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(embedRequest),
+        timeout: RAG_TIMEOUT
+      });
 
-        await fetch(`${this.baseUrl}/api/embed`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify(embedRequest),
-          timeout: RAG_TIMEOUT
-        });
+      if (!response.ok) {
+        throw new Error(`RAG seed initialization failed: ${response.status} ${response.statusText}`);
       }
 
-      return { success: true };
+      const result = await response.json();
+      
+      if (result.success) {
+        return { success: true, seedDocumentId };
+      } else {
+        return { success: false, error: result.message || 'Unknown seed initialization error' };
+      }
     } catch (error) {
-      console.error('RAG initialization error:', error);
+      console.error('RAG seed initialization error:', error);
       return { success: false, error: error.message };
+    }
+  }
+
+  /**
+   * Add a starred match to the RAG collection
+   * @param {string} campaignId - Campaign identifier
+   * @param {Object} post - Reddit post object
+   * @param {string} postId - Database post ID
+   * @returns {Promise<{success: boolean, documentId?: string, error?: string}>}
+   */
+  async addStarredMatch(campaignId, post, postId) {
+    try {
+      const collectionName = `campaign_${campaignId}`;
+      const documentId = `starred_${campaignId}_${postId}`;
+      
+      // Create starred match document
+      const starredContent = `
+STARRED MATCH EXAMPLE:
+
+POST TITLE: ${post.title}
+POST CONTENT: ${post.selftext || post.content || 'No content'}
+SUBREDDIT: ${post.subreddit}
+AUTHOR: ${post.author}
+WHY STARRED: User identified this as a high-quality match showing genuine interest or need for the solution
+      `.trim();
+
+      const embedRequest = {
+        collection_name: collectionName,
+        document: {
+          id: documentId,
+          content: starredContent,
+          metadata: {
+            type: 'starred_match',
+            campaign_id: campaignId,
+            post_id: postId,
+            reddit_id: post.reddit_id || post.id,
+            title: post.title,
+            subreddit: post.subreddit,
+            author: post.author,
+            starred_at: new Date().toISOString()
+          }
+        }
+      };
+
+      const response = await fetch(`${this.baseUrl}/api/embed`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(embedRequest),
+        timeout: RAG_TIMEOUT
+      });
+
+      if (!response.ok) {
+        throw new Error(`RAG starred match embed failed: ${response.status} ${response.statusText}`);
+      }
+
+      const result = await response.json();
+      
+      if (result.success) {
+        return { success: true, documentId };
+      } else {
+        return { success: false, error: result.message || 'Unknown starred match embed error' };
+      }
+    } catch (error) {
+      console.error('RAG starred match embed error:', error);
+      return { success: false, error: error.message };
+    }
+  }
+
+  /**
+   * Remove a starred match from the RAG collection
+   * @param {string} campaignId - Campaign identifier
+   * @param {string} ragDocumentId - RAG document ID to remove
+   * @returns {Promise<{success: boolean, error?: string}>}
+   */
+  async removeStarredMatch(campaignId, ragDocumentId) {
+    return await this.deleteDocument(campaignId, ragDocumentId);
+  }
+
+  /**
+   * Query posts against collection (seed + starred matches only)
+   * @param {string} campaignId - Campaign identifier
+   * @param {Object} post - Reddit post to match against
+   * @param {number} threshold - Similarity threshold (0.0-1.0)
+   * @param {number} topK - Maximum results to return
+   * @returns {Promise<{success: boolean, shouldProcess: boolean, similarity?: number}>}
+   */
+  async queryForMatching(campaignId, post, threshold = 0.6, topK = 10) {
+    try {
+      const collectionName = `campaign_${campaignId}`;
+      
+      const queryContent = `
+POST TITLE: ${post.title}
+POST CONTENT: ${post.selftext || 'No content'}
+AUTHOR: ${post.author.name || post.author}
+      `.trim();
+
+      const queryRequest = {
+        collection_name: collectionName,
+        query: queryContent,
+        top_k: topK,
+        min_score: 0.0
+      };
+
+      const response = await fetch(`${this.baseUrl}/api/query`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(queryRequest),
+        timeout: RAG_TIMEOUT
+      });
+
+      if (!response.ok) {
+        throw new Error(`RAG query failed: ${response.status} ${response.statusText}`);
+      }
+
+      const result = await response.json();
+      
+      if (result.success && result.results.length > 0) {
+        // Check similarity against ALL documents (seed + starred matches)
+        const maxSimilarity = Math.max(...result.results.map(r => r.score));
+        return { 
+          success: true, 
+          shouldProcess: maxSimilarity >= threshold,
+          similarity: maxSimilarity
+        };
+      }
+      
+      // No documents in collection - don't process
+      return { success: true, shouldProcess: false, similarity: 0 };
+      
+    } catch (error) {
+      console.error('RAG query error:', error);
+      return { success: false, shouldProcess: false, error: error.message };
     }
   }
 

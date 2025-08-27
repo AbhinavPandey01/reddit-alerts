@@ -82,6 +82,30 @@ class ApiService {
   async testRedditConnection() {
     return this.request('/reddit/test')
   }
+
+  // Star/unstar endpoints
+  async starPost(postId) {
+    return this.request(`/reddit/posts/${postId}/star`, {
+      method: 'POST',
+    })
+  }
+
+  async unstarPost(postId) {
+    return this.request(`/reddit/posts/${postId}/star`, {
+      method: 'DELETE',
+    })
+  }
+
+  async getStarredMatches(campaignId) {
+    return this.request(`/reddit/campaigns/${campaignId}/starred`)
+  }
+
+  async getSubredditSuggestions(productName, description) {
+    return this.request('/reddit/subreddit-suggestions', {
+      method: 'POST',
+      body: { product_name: productName, description: description }
+    })
+  }
 }
 
 export const api = new ApiService() 

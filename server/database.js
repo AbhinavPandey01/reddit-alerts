@@ -60,28 +60,55 @@ export async function initDatabase() {
     `);
 
     // Add new columns to existing tables if they don't exist
-    try {
-      await db.runAsync(`ALTER TABLE campaigns ADD COLUMN last_processed_post_fullname TEXT`);
-    } catch (error) {
-      // Column already exists, ignore
+    // Check and add columns one by one with better error handling
+    
+    // Check if processed_at column exists
+    const columns = await db.allAsync(`PRAGMA table_info(posts)`);
+    const hasProcessedAt = columns.some(col => col.name === 'processed_at');
+    
+    if (!hasProcessedAt) {
+      try {
+        await db.runAsync(`ALTER TABLE posts ADD COLUMN processed_at DATETIME`);
+        await db.runAsync(`UPDATE posts SET processed_at = CURRENT_TIMESTAMP WHERE processed_at IS NULL`);
+        console.log('✅ Added processed_at column to posts table');
+      } catch (error) {
+        console.error('❌ Failed to add processed_at column:', error.message);
+      }
     }
     
-    try {
-      await db.runAsync(`ALTER TABLE posts ADD COLUMN analysis_method TEXT DEFAULT 'gpt_only'`);
-    } catch (error) {
-      // Column already exists, ignore
+    // Check other columns
+    const hasAnalysisMethod = columns.some(col => col.name === 'analysis_method');
+    const hasRagScore = columns.some(col => col.name === 'rag_score');
+    
+    if (!hasAnalysisMethod) {
+      try {
+        await db.runAsync(`ALTER TABLE posts ADD COLUMN analysis_method TEXT DEFAULT 'gpt_only'`);
+        console.log('✅ Added analysis_method column to posts table');
+      } catch (error) {
+        console.error('❌ Failed to add analysis_method column:', error.message);
+      }
     }
     
-    try {
-      await db.runAsync(`ALTER TABLE posts ADD COLUMN rag_score REAL`);
-    } catch (error) {
-      // Column already exists, ignore
+    if (!hasRagScore) {
+      try {
+        await db.runAsync(`ALTER TABLE posts ADD COLUMN rag_score REAL`);
+        console.log('✅ Added rag_score column to posts table');
+      } catch (error) {
+        console.error('❌ Failed to add rag_score column:', error.message);
+      }
     }
     
-    try {
-      await db.runAsync(`ALTER TABLE posts ADD COLUMN processed_at DATETIME DEFAULT CURRENT_TIMESTAMP`);
-    } catch (error) {
-      // Column already exists, ignore
+    // Check campaigns table
+    const campaignColumns = await db.allAsync(`PRAGMA table_info(campaigns)`);
+    const hasLastProcessed = campaignColumns.some(col => col.name === 'last_processed_post_fullname');
+    
+    if (!hasLastProcessed) {
+      try {
+        await db.runAsync(`ALTER TABLE campaigns ADD COLUMN last_processed_post_fullname TEXT`);
+        console.log('✅ Added last_processed_post_fullname column to campaigns table');
+      } catch (error) {
+        console.error('❌ Failed to add last_processed_post_fullname column:', error.message);
+      }
     }
 
     // Generated responses table
@@ -93,6 +120,20 @@ export async function initDatabase() {
         content TEXT NOT NULL,
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
         FOREIGN KEY (post_id) REFERENCES posts (id)
+      )
+    `);
+
+    // Starred matches table for RAG learning
+    await db.runAsync(`
+      CREATE TABLE IF NOT EXISTS starred_matches (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        campaign_id INTEGER NOT NULL,
+        post_id INTEGER NOT NULL,
+        rag_document_id TEXT NOT NULL,
+        starred_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (campaign_id) REFERENCES campaigns (id),
+        FOREIGN KEY (post_id) REFERENCES posts (id),
+        UNIQUE(campaign_id, post_id)
       )
     `);
 

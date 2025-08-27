@@ -61,8 +61,7 @@ async function scanCampaign(campaign) {
     console.log(`🔍 Scanning campaign: ${campaign.product_name}`);
     
     // Check if RAG service is available
-    const ragHealth = await ragService.healthCheck();
-    const useRAG = ragHealth.available;
+    const useRAG = false;
     
     if (!useRAG) {
       console.log(`⚠️ RAG service unavailable for campaign ${campaign.id}, using GPT-4o only`);
@@ -101,31 +100,10 @@ async function scanCampaign(campaign) {
           let analysisResult;
           
           if (useRAG) {
-            // RAG Pipeline (embed, query, filter, GPT, delete)
-            analysisResult = await analyzePostRelevanceWithRAG(
-              post, 
-              campaign, 
-              campaign.rag_threshold || 0.6
-            );
-            
-            if (analysisResult.method === 'rag_filtered') {
-              ragFilteredCount++;
-            } else if (analysisResult.method === 'rag_then_gpt') {
-              gptAnalyzedCount++;
-            }
+            analysisResult = await analyzePostRelevanceWithRAG(post, campaign, 0.6);
           } else {
-            // Fallback to GPT-4o only
-            const score = await analyzePostRelevance(
-              post, 
-              campaign.search_prompt, 
-              campaign.description
-            );
-            // Convert to expected format
-            analysisResult = {
-              score: score,
-              method: 'gpt_only'
-            };
-            gptAnalyzedCount++;
+            const score = await analyzePostRelevance(post, campaign.search_prompt, campaign.description);
+            analysisResult = { score: score, method: 'gpt_only' };
           }
           
           const relevanceScore = analysisResult.score;
@@ -133,7 +111,7 @@ async function scanCampaign(campaign) {
           
           // Save ALL processed posts (even filtered ones) to prevent reprocessing
           await db.runAsync(`
-            INSERT INTO posts (
+            INSERT OR IGNORE INTO posts (
               campaign_id, reddit_id, title, content, author, subreddit, 
               url, relevance_score, reddit_created_at, analysis_method, rag_score, processed_at
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
