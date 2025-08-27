@@ -1,5 +1,6 @@
 import express from 'express';
 import { db } from '../database.js';
+import { ragService } from '../services/ragService.js';
 
 const router = express.Router();
 
@@ -15,7 +16,25 @@ router.post('/', async (req, res) => {
     );
 
     const campaign = await db.getAsync('SELECT * FROM campaigns WHERE id = ?', [result.lastID]);
-    res.json(campaign);
+    
+    // Initialize RAG knowledge base for the new campaign
+    try {
+      console.log(`🔍 Initializing RAG knowledge base for campaign ${campaign.id}`);
+      await ragService.initializeCampaignKnowledge(
+        campaign.id, 
+        search_prompt || campaign.search_prompt, 
+        description
+      );
+      console.log(`✅ RAG knowledge base initialized for campaign ${campaign.id}`);
+    } catch (ragError) {
+      console.warn(`⚠️ Failed to initialize RAG for campaign ${campaign.id}:`, ragError.message);
+      // Don't fail campaign creation if RAG initialization fails
+    }
+    
+    res.json({
+      ...campaign,
+      subreddits: JSON.parse(campaign.subreddits)
+    });
   } catch (error) {
     console.error('Error creating campaign:', error);
     res.status(500).json({ error: 'Failed to create campaign' });
@@ -80,7 +99,23 @@ router.put('/:id', async (req, res) => {
 // Delete campaign
 router.delete('/:id', async (req, res) => {
   try {
-    await db.runAsync('DELETE FROM campaigns WHERE id = ?', [req.params.id]);
+    const campaignId = req.params.id;
+    
+    // Clean up RAG knowledge base
+    try {
+      console.log(`🗑️ Cleaning up RAG knowledge base for campaign ${campaignId}`);
+      await ragService.cleanupCampaign(campaignId);
+      console.log(`✅ RAG knowledge base cleaned up for campaign ${campaignId}`);
+    } catch (ragError) {
+      console.warn(`⚠️ Failed to cleanup RAG for campaign ${campaignId}:`, ragError.message);
+      // Don't fail campaign deletion if RAG cleanup fails
+    }
+    
+    // Delete campaign and related data
+    await db.runAsync('DELETE FROM responses WHERE post_id IN (SELECT id FROM posts WHERE campaign_id = ?)', [campaignId]);
+    await db.runAsync('DELETE FROM posts WHERE campaign_id = ?', [campaignId]);
+    await db.runAsync('DELETE FROM campaigns WHERE id = ?', [campaignId]);
+    
     res.json({ message: 'Campaign deleted successfully' });
   } catch (error) {
     console.error('Error deleting campaign:', error);

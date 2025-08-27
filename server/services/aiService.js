@@ -1,5 +1,6 @@
 import OpenAI from 'openai';
 import dotenv from 'dotenv';
+import { ragService } from './ragService.js';
 
 dotenv.config();
 
@@ -7,7 +8,102 @@ const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
 });
 
-export async function analyzePostRelevance(post, searchPrompt, productDescription) {
+/**
+ * Analyze post relevance with RAG pre-filtering pipeline
+ * @param {Object} post - Reddit post object
+ * @param {Object} campaign - Campaign object with search_prompt, description, etc.
+ * @param {number} ragThreshold - RAG similarity threshold (default 0.6)
+ * @returns {Promise<{score: number, method: string, ragScore?: number, ragDocumentId?: string}>}
+ */
+export async function analyzePostRelevanceWithRAG(post, campaign, ragThreshold = 0.6) {
+  let ragDocumentId = null;
+  
+  try {
+    // Step 1: Embed the post in RAG for similarity matching
+    console.log(`🔍 RAG: Embedding post ${post.id} for campaign ${campaign.id}`);
+    const embedResult = await ragService.embedPost(campaign.id, post, campaign.search_prompt);
+    
+    if (!embedResult.success) {
+      console.log(`⚠️ RAG embed failed, falling back to GPT-4o: ${embedResult.error}`);
+      return await analyzePostRelevanceGPT(post, campaign.search_prompt, campaign.description);
+    }
+    
+    ragDocumentId = embedResult.documentId;
+    
+    // Step 2: Query for similar posts and filter by threshold
+    console.log(`🔍 RAG: Querying similarity for post ${post.id}`);
+    const queryResult = await ragService.queryAndFilter(
+      campaign.id, 
+      post, 
+      campaign.search_prompt, 
+      ragThreshold
+    );
+    
+    if (!queryResult.success) {
+      console.log(`⚠️ RAG query failed, falling back to GPT-4o: ${queryResult.error}`);
+      // Clean up the embedded document
+      if (ragDocumentId) {
+        await ragService.deleteDocument(campaign.id, ragDocumentId);
+      }
+      return await analyzePostRelevanceGPT(post, campaign.search_prompt, campaign.description);
+    }
+    
+    // Step 3: Check if post passes RAG filter
+    if (!queryResult.shouldProcess) {
+      console.log(`🚫 RAG: Post ${post.id} filtered out (similarity: ${queryResult.similarity?.toFixed(3)}, threshold: ${ragThreshold})`);
+      
+      // Step 4: Delete document from RAG (no longer needed)
+      await ragService.deleteDocument(campaign.id, ragDocumentId);
+      
+      return {
+        score: 0,
+        method: 'rag_filtered',
+        ragScore: queryResult.similarity,
+        ragMatchCount: queryResult.matchCount
+      };
+    }
+    
+    // Step 4: Post passes RAG filter, analyze with GPT-4o
+    console.log(`✅ RAG: Post ${post.id} passed filter (similarity: ${queryResult.similarity?.toFixed(3)}), analyzing with GPT-4o`);
+    const gptResult = await analyzePostRelevanceGPT(post, campaign.search_prompt, campaign.description);
+    
+    // Step 5: Delete document from RAG (no longer needed)
+    await ragService.deleteDocument(campaign.id, ragDocumentId);
+    
+    return {
+      score: gptResult.score,
+      method: 'rag_then_gpt',
+      ragScore: queryResult.similarity,
+      ragMatchCount: queryResult.matchCount,
+      gptScore: gptResult.score
+    };
+    
+  } catch (error) {
+    console.error('Error in RAG pipeline:', error);
+    
+    // Clean up on error
+    if (ragDocumentId) {
+      await ragService.deleteDocument(campaign.id, ragDocumentId);
+    }
+    
+    // Fallback to GPT-4o only
+    const fallbackResult = await analyzePostRelevanceGPT(post, campaign.search_prompt, campaign.description);
+    return {
+      score: fallbackResult.score,
+      method: 'gpt_fallback',
+      error: error.message
+    };
+  }
+}
+
+/**
+ * Original GPT-4o analysis function (now used as fallback or final stage)
+ * @param {Object} post - Reddit post object
+ * @param {string} searchPrompt - Search criteria
+ * @param {string} productDescription - Product description
+ * @returns {Promise<{score: number, method: string}>}
+ */
+export async function analyzePostRelevanceGPT(post, searchPrompt, productDescription) {
   try {
     const prompt = `
 You are analyzing Reddit posts to find potential leads for a product.
@@ -37,11 +133,20 @@ Respond with ONLY a number from 0-100.
     });
 
     const score = parseInt(response.choices[0].message.content.trim());
-    return isNaN(score) ? 0 : Math.min(100, Math.max(0, score));
+    return {
+      score: isNaN(score) ? 0 : Math.min(100, Math.max(0, score)),
+      method: 'gpt_only'
+    };
   } catch (error) {
-    console.error('Error analyzing post relevance:', error);
-    return 0;
+    console.error('Error analyzing post relevance with GPT:', error);
+    return { score: 0, method: 'gpt_error', error: error.message };
   }
+}
+
+// Keep the original function for backward compatibility
+export async function analyzePostRelevance(post, searchPrompt, productDescription) {
+  const result = await analyzePostRelevanceGPT(post, searchPrompt, productDescription);
+  return result.score;
 }
 
 export async function generateResponse(post, type, dmPrompt, productName, productDescription, website) {

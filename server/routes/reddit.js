@@ -9,24 +9,30 @@ const router = express.Router();
 router.get('/posts/:campaignId', async (req, res) => {
   try {
     const { campaignId } = req.params;
-    const { minRelevance = 0, subreddit } = req.query;
+    const { minRelevance = 30, subreddit, showAll = false } = req.query;
     
     let query = `
       SELECT p.*, 
              (SELECT content FROM responses WHERE post_id = p.id AND type = 'dm' LIMIT 1) as dm_content,
              (SELECT content FROM responses WHERE post_id = p.id AND type = 'comment' LIMIT 1) as comment_content
       FROM posts p 
-      WHERE p.campaign_id = ? AND p.relevance_score >= ?
+      WHERE p.campaign_id = ?
     `;
     
-    const params = [campaignId, minRelevance];
+    const params = [campaignId];
+    
+    // Only show relevant posts by default, unless showAll is true
+    if (showAll !== 'true') {
+      query += ' AND p.relevance_score >= ?';
+      params.push(minRelevance);
+    }
     
     if (subreddit) {
       query += ' AND p.subreddit = ?';
       params.push(subreddit);
     }
     
-    query += ' ORDER BY p.relevance_score DESC, p.created_at DESC';
+    query += ' ORDER BY p.relevance_score DESC, p.processed_at DESC';
     
     const posts = await db.allAsync(query, params);
     res.json(posts);
@@ -81,20 +87,43 @@ router.post('/posts/:postId/response', async (req, res) => {
   }
 });
 
-// Get subreddits for a campaign
+// Get subreddits for a campaign with enhanced statistics
 router.get('/subreddits/:campaignId', async (req, res) => {
   try {
     const { campaignId } = req.params;
     
     const subreddits = await db.allAsync(`
-      SELECT DISTINCT subreddit, COUNT(*) as post_count 
+      SELECT 
+        subreddit,
+        COUNT(*) as post_count,
+        COUNT(CASE WHEN relevance_score >= 30 THEN 1 END) as relevant_count,
+        COUNT(CASE WHEN analysis_method = 'rag_filtered' THEN 1 END) as rag_filtered_count,
+        COUNT(CASE WHEN analysis_method = 'rag_then_gpt' THEN 1 END) as rag_gpt_count,
+        COUNT(CASE WHEN analysis_method = 'gpt_only' THEN 1 END) as gpt_only_count,
+        AVG(relevance_score) as avg_relevance,
+        MAX(relevance_score) as max_relevance,
+        COUNT(CASE WHEN relevance_score >= 70 THEN 1 END) as high_relevance_count,
+        MAX(processed_at) as last_processed
       FROM posts 
       WHERE campaign_id = ? 
       GROUP BY subreddit 
       ORDER BY post_count DESC
     `, [campaignId]);
     
-    res.json(subreddits);
+    // Get campaign pagination info
+    const campaign = await db.getAsync(`
+      SELECT last_processed_post_fullname, updated_at 
+      FROM campaigns 
+      WHERE id = ?
+    `, [campaignId]);
+    
+    res.json({
+      subreddit_stats: subreddits,
+      pagination_info: {
+        last_processed_post: campaign?.last_processed_post_fullname || null,
+        last_scan: campaign?.updated_at || null
+      }
+    });
   } catch (error) {
     console.error('Error fetching subreddits:', error);
     res.status(500).json({ error: 'Failed to fetch subreddits' });

@@ -1,12 +1,22 @@
 import cron from 'node-cron';
 import { getRedditClient } from './redditClient.js';
-import { analyzePostRelevance } from './aiService.js';
+import { analyzePostRelevanceWithRAG, analyzePostRelevance } from './aiService.js';
+import { ragService } from './ragService.js';
 import { db } from '../database.js';
 
 let isScanning = false;
 
 export function startRedditScanner() {
-  console.log('🔍 Starting Reddit scanner...');
+  console.log('🔍 Starting Reddit scanner with RAG filtering...');
+  
+  // Check RAG service health on startup
+  ragService.healthCheck().then(health => {
+    if (health.available) {
+      console.log('✅ RAG service is available');
+    } else {
+      console.log('⚠️ RAG service unavailable, will use GPT-4o only mode');
+    }
+  });
   
   // Scan every 5 minutes
   cron.schedule('*/5 * * * *', async () => {
@@ -50,60 +60,125 @@ async function scanCampaign(campaign) {
     
     console.log(`🔍 Scanning campaign: ${campaign.product_name}`);
     
+    // Check if RAG service is available
+    const ragHealth = await ragService.healthCheck();
+    const useRAG = ragHealth.available;
+    
+    if (!useRAG) {
+      console.log(`⚠️ RAG service unavailable for campaign ${campaign.id}, using GPT-4o only`);
+    }
+    
+    let campaignNewestPostFullname = null; // Track newest post across all subreddits
+    
     for (const subredditName of subreddits) {
       try {
         const subreddit = await reddit.getSubreddit(subredditName);
-        const posts = await subreddit.getNew({ limit: 25 });
+        
+        // Use pagination to get only new posts since last scan
+        const fetchOptions = { limit: 25 };
+        if (campaign.last_processed_post_fullname) {
+          fetchOptions.after = campaign.last_processed_post_fullname;
+          console.log(`📄 Using pagination: after ${campaign.last_processed_post_fullname}`);
+        } else {
+          console.log(`📄 First scan for campaign ${campaign.id}, getting latest posts`);
+        }
+        
+        const posts = await subreddit.getNew(fetchOptions);
         
         let newPostsCount = 0;
+        let ragFilteredCount = 0;
+        let gptAnalyzedCount = 0;
+        let processedPostsCount = 0;
+        
+        console.log(`📊 Retrieved ${posts.length} posts from r/${subredditName}`);
         
         for (const post of posts) {
-          // Skip if post already exists
-          const existingPost = await db.getAsync(
-            'SELECT id FROM posts WHERE reddit_id = ?', 
-            [post.id]
-          );
+          // Track the newest post fullname (first post is newest)
+          if (!campaignNewestPostFullname) {
+            campaignNewestPostFullname = post.name; // post.name is the fullname (t3_xxxxx)
+          }
           
-          if (existingPost) continue;
+          let analysisResult;
           
-          // Analyze relevance with AI
-          const relevanceScore = await analyzePostRelevance(
-            post, 
-            campaign.search_prompt, 
-            campaign.description
-          );
-          
-          // Only save posts with relevance > 30
-          if (relevanceScore > 30) {
-            await db.runAsync(`
-              INSERT INTO posts (
-                campaign_id, reddit_id, title, content, author, subreddit, 
-                url, relevance_score, reddit_created_at
-              ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            `, [
-              campaign.id,
-              post.id,
-              post.title,
-              post.selftext || '',
-              post.author.name,
-              post.subreddit.display_name,
-              `https://reddit.com${post.permalink}`,
-              relevanceScore,
-              new Date(post.created_utc * 1000).toISOString()
-            ]);
+          if (useRAG) {
+            // RAG Pipeline (embed, query, filter, GPT, delete)
+            analysisResult = await analyzePostRelevanceWithRAG(
+              post, 
+              campaign, 
+              campaign.rag_threshold || 0.6
+            );
             
+            if (analysisResult.method === 'rag_filtered') {
+              ragFilteredCount++;
+            } else if (analysisResult.method === 'rag_then_gpt') {
+              gptAnalyzedCount++;
+            }
+          } else {
+            // Fallback to GPT-4o only
+            const score = await analyzePostRelevance(
+              post, 
+              campaign.search_prompt, 
+              campaign.description
+            );
+            // Convert to expected format
+            analysisResult = {
+              score: score,
+              method: 'gpt_only'
+            };
+            gptAnalyzedCount++;
+          }
+          
+          const relevanceScore = analysisResult.score;
+          processedPostsCount++;
+          
+          // Save ALL processed posts (even filtered ones) to prevent reprocessing
+          await db.runAsync(`
+            INSERT INTO posts (
+              campaign_id, reddit_id, title, content, author, subreddit, 
+              url, relevance_score, reddit_created_at, analysis_method, rag_score, processed_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+          `, [
+            campaign.id,
+            post.id,
+            post.title,
+            post.selftext || '',
+            post.author.name,
+            post.subreddit.display_name,
+            `https://reddit.com${post.permalink}`,
+            relevanceScore,
+            new Date(post.created_utc * 1000).toISOString(),
+            analysisResult.method || 'unknown',
+            analysisResult.ragScore || null
+          ]);
+          
+          if (relevanceScore > 30) {
             newPostsCount++;
+            console.log(`✅ Saved relevant post ${post.id} (score: ${relevanceScore}, method: ${analysisResult.method})`);
+          } else {
+            console.log(`📝 Saved filtered post ${post.id} (score: ${relevanceScore}, method: ${analysisResult.method})`);
           }
         }
         
-        if (newPostsCount > 0) {
-          console.log(`  📝 Found ${newPostsCount} new posts in r/${subredditName}`);
+        if (processedPostsCount > 0) {
+          console.log(`  📊 r/${subredditName}: ${processedPostsCount} processed, ${newPostsCount} relevant, ${ragFilteredCount} RAG filtered, ${gptAnalyzedCount} GPT analyzed`);
+        } else {
+          console.log(`  📊 r/${subredditName}: No new posts since last scan`);
         }
         
       } catch (error) {
         console.error(`Error scanning r/${subredditName}:`, error.message);
       }
     }
+    
+    // Update campaign's last processed post fullname for next scan
+    if (campaignNewestPostFullname) {
+      await db.runAsync(
+        'UPDATE campaigns SET last_processed_post_fullname = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
+        [campaignNewestPostFullname, campaign.id]
+      );
+      console.log(`📌 Updated last processed post for campaign ${campaign.id}: ${campaignNewestPostFullname}`);
+    }
+    
   } catch (error) {
     console.error(`Error scanning campaign ${campaign.id}:`, error);
   }

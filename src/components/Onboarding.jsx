@@ -1,17 +1,10 @@
 import React, { useState } from 'react'
 import { api } from '../services/api'
 
-const SUGGESTED_SUBREDDITS = {
-  'website builder': ['entrepreneur', 'smallbusiness', 'startups', 'webdev', 'web_design'],
-  'ai tool': ['artificial', 'MachineLearning', 'ChatGPT', 'OpenAI', 'singularity'],
-  'saas': ['SaaS', 'entrepreneur', 'startups', 'smallbusiness', 'EntrepreneurRideAlong'],
-  'marketing': ['marketing', 'digitalmarketing', 'socialmedia', 'PPC', 'SEO'],
-  'productivity': ['productivity', 'getmotivated', 'selfimprovement', 'lifehacks', 'organization']
-}
-
 function Onboarding({ onCampaignCreated }) {
   const [step, setStep] = useState(1)
   const [loading, setLoading] = useState(false)
+  const [customSubreddit, setCustomSubreddit] = useState('')
   const [formData, setFormData] = useState({
     product_name: '',
     description: '',
@@ -20,19 +13,29 @@ function Onboarding({ onCampaignCreated }) {
   })
 
   const getSuggestedSubreddits = () => {
+    const productType = formData.product_name.toLowerCase()
     const description = formData.description.toLowerCase()
-    for (const [key, subreddits] of Object.entries(SUGGESTED_SUBREDDITS)) {
-      if (description.includes(key)) {
-        return subreddits
-      }
+    
+    // AI/Tech products
+    if (productType.includes('ai') || description.includes('artificial intelligence') || 
+        description.includes('machine learning') || productType.includes('tech')) {
+      return ['artificial', 'MachineLearning', 'technology', 'startups', 'entrepreneur']
     }
-    return SUGGESTED_SUBREDDITS.saas // Default
-  }
-
-  const handleNext = () => {
-    if (step === 1 && formData.product_name && formData.description) {
-      setStep(2)
+    
+    // SaaS products
+    if (description.includes('saas') || description.includes('software') || 
+        description.includes('platform') || description.includes('tool')) {
+      return ['SaaS', 'entrepreneur', 'startups', 'smallbusiness', 'productivity']
     }
+    
+    // E-commerce
+    if (description.includes('ecommerce') || description.includes('store') || 
+        description.includes('shop') || description.includes('sell')) {
+      return ['ecommerce', 'Entrepreneur', 'smallbusiness', 'dropship', 'marketing']
+    }
+    
+    // Default suggestions
+    return ['entrepreneur', 'startups', 'smallbusiness', 'SaaS', 'marketing']
   }
 
   const handleSubredditToggle = (subreddit) => {
@@ -44,9 +47,49 @@ function Onboarding({ onCampaignCreated }) {
     }))
   }
 
-  const handleSubmit = async () => {
-    if (formData.subreddits.length === 0) return
+  const handleAddCustomSubreddit = () => {
+    if (!customSubreddit.trim()) return
+    
+    // Remove 'r/' prefix if user included it
+    const cleanSubreddit = customSubreddit.replace(/^r\//, '').trim()
+    
+    // Validate subreddit name (basic validation)
+    if (!/^[A-Za-z0-9_]+$/.test(cleanSubreddit)) {
+      alert('Invalid subreddit name. Use only letters, numbers, and underscores.')
+      return
+    }
+    
+    if (formData.subreddits.includes(cleanSubreddit)) {
+      alert('This subreddit is already selected.')
+      return
+    }
+    
+    setFormData(prev => ({
+      ...prev,
+      subreddits: [...prev.subreddits, cleanSubreddit]
+    }))
+    setCustomSubreddit('')
+  }
 
+  const handleCustomSubredditKeyPress = (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault()
+      handleAddCustomSubreddit()
+    }
+  }
+
+  const handleRemoveSubreddit = (subreddit) => {
+    setFormData(prev => ({
+      ...prev,
+      subreddits: prev.subreddits.filter(s => s !== subreddit)
+    }))
+  }
+
+  const handleNext = () => {
+    setStep(2)
+  }
+
+  const handleSubmit = async () => {
     setLoading(true)
     try {
       const campaign = await api.createCampaign(formData)
@@ -60,23 +103,17 @@ function Onboarding({ onCampaignCreated }) {
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 flex items-center justify-center p-4">
+    <div className="min-h-screen bg-gray-50 flex items-center justify-center p-4">
       <div className="max-w-2xl w-full">
-        {/* Header */}
-        <div className="text-center mb-8">
-          <h1 className="text-4xl font-bold text-gray-900 mb-2">Reddit Alerts</h1>
-          <p className="text-xl text-gray-600">Find leads on Reddit with AI</p>
-        </div>
-
-        {/* Progress */}
+        {/* Progress Steps */}
         <div className="flex items-center justify-center mb-8">
-          <div className={`w-8 h-8 rounded-full flex items-center justify-center text-sm font-medium ${
+          <div className={`flex items-center justify-center w-8 h-8 rounded-full text-sm font-medium mr-4 ${
             step >= 1 ? 'bg-primary-600 text-white' : 'bg-gray-200 text-gray-500'
           }`}>
             1
           </div>
-          <div className={`w-16 h-1 mx-2 ${step >= 2 ? 'bg-primary-600' : 'bg-gray-200'}`}></div>
-          <div className={`w-8 h-8 rounded-full flex items-center justify-center text-sm font-medium ${
+          <div className="w-16 h-0.5 bg-gray-200 mr-4"></div>
+          <div className={`flex items-center justify-center w-8 h-8 rounded-full text-sm font-medium ${
             step >= 2 ? 'bg-primary-600 text-white' : 'bg-gray-200 text-gray-500'
           }`}>
             2
@@ -121,7 +158,7 @@ function Onboarding({ onCampaignCreated }) {
                   <input
                     type="url"
                     className="input"
-                    placeholder="https://page.com"
+                    placeholder="https://yourwebsite.com"
                     value={formData.website}
                     onChange={(e) => setFormData(prev => ({ ...prev, website: e.target.value }))}
                   />
@@ -147,7 +184,7 @@ function Onboarding({ onCampaignCreated }) {
                 Choose subreddits where your potential customers might be asking for help.
               </p>
 
-              <div className="mb-4">
+              <div className="mb-6">
                 <h3 className="text-sm font-medium text-gray-700 mb-3">Suggested for your product:</h3>
                 <div className="flex flex-wrap gap-2">
                   {getSuggestedSubreddits().map(subreddit => (
@@ -166,6 +203,36 @@ function Onboarding({ onCampaignCreated }) {
                 </div>
               </div>
 
+              {/* Custom Subreddit Input */}
+              <div className="mb-6">
+                <h3 className="text-sm font-medium text-gray-700 mb-3">Add custom subreddit:</h3>
+                <div className="flex gap-2">
+                  <div className="flex-1 relative">
+                    <span className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-500 text-sm">
+                      r/
+                    </span>
+                    <input
+                      type="text"
+                      className="input pl-8"
+                      placeholder="entrepreneur"
+                      value={customSubreddit}
+                      onChange={(e) => setCustomSubreddit(e.target.value)}
+                      onKeyPress={handleCustomSubredditKeyPress}
+                    />
+                  </div>
+                  <button
+                    onClick={handleAddCustomSubreddit}
+                    disabled={!customSubreddit.trim()}
+                    className="px-4 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                  >
+                    Add
+                  </button>
+                </div>
+                <p className="text-xs text-gray-500 mt-1">
+                  Enter subreddit name without the "r/" prefix
+                </p>
+              </div>
+
               {formData.subreddits.length > 0 && (
                 <div className="mb-6">
                   <h3 className="text-sm font-medium text-gray-700 mb-2">
@@ -175,9 +242,15 @@ function Onboarding({ onCampaignCreated }) {
                     {formData.subreddits.map(subreddit => (
                       <span
                         key={subreddit}
-                        className="px-3 py-1 bg-primary-100 text-primary-800 rounded-lg text-sm"
+                        className="group px-3 py-1 bg-primary-100 text-primary-800 rounded-lg text-sm flex items-center gap-2"
                       >
                         r/{subreddit}
+                        <button
+                          onClick={() => handleRemoveSubreddit(subreddit)}
+                          className="text-primary-600 hover:text-primary-800 opacity-0 group-hover:opacity-100 transition-opacity"
+                        >
+                          ×
+                        </button>
                       </span>
                     ))}
                   </div>
