@@ -1,18 +1,16 @@
 import React, { useState, useEffect } from 'react'
 import { api } from '../services/api'
 
-function PostDetail({ post, campaign }) {
+function PostDetail({ post, campaign, onStarToggle }) {
   const [dmContent, setDmContent] = useState(post.dm_content || '')
   const [commentContent, setCommentContent] = useState(post.comment_content || '')
   const [generating, setGenerating] = useState({ dm: false, comment: false })
-  const [isStarred, setIsStarred] = useState(post.is_starred || false)
   const [starring, setStarring] = useState(false)
 
   // Clear content when post changes
   useEffect(() => {
     setDmContent(post.dm_content || '')
     setCommentContent(post.comment_content || '')
-    setIsStarred(post.is_starred || false)
   }, [post.id])
 
   const generateResponse = async (type) => {
@@ -73,16 +71,13 @@ ${post.content || 'No content'}`
     setStarring(true)
     
     try {
-      if (isStarred) {
-        await api.unstarPost(post.id)
-        setIsStarred(false)
-      } else {
-        await api.starPost(post.id)
-        setIsStarred(true)
+      const success = await onStarToggle(post.id, post.is_starred)
+      if (!success) {
+        alert(`Failed to ${post.is_starred ? 'unstar' : 'star'} post. Please try again.`)
       }
     } catch (error) {
       console.error('Error toggling star:', error)
-      alert(`Failed to ${isStarred ? 'unstar' : 'star'} post. Please try again.`)
+      alert(`Failed to ${post.is_starred ? 'unstar' : 'star'} post. Please try again.`)
     } finally {
       setStarring(false)
     }
@@ -110,13 +105,13 @@ ${post.content || 'No content'}`
               onClick={toggleStar}
               disabled={starring}
               className={`p-2 rounded-full transition-colors ${
-                isStarred
+                post.is_starred
                   ? 'text-yellow-500 hover:text-yellow-600 bg-yellow-50 hover:bg-yellow-100'
                   : 'text-gray-400 hover:text-yellow-500 hover:bg-yellow-50'
               } ${starring ? 'opacity-50 cursor-not-allowed' : ''}`}
-              title={isStarred ? 'Remove from starred matches' : 'Add to starred matches'}
+              title={post.is_starred ? 'Remove from starred matches' : 'Add to starred matches'}
             >
-              <svg className="w-5 h-5" fill={isStarred ? 'currentColor' : 'none'} stroke="currentColor" viewBox="0 0 24 24">
+              <svg className="w-5 h-5" fill={post.is_starred ? 'currentColor' : 'none'} stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11.049 2.927c.3-.921 1.603-.921 1.902 0l1.519 4.674a1 1 0 00.95.69h4.915c.969 0 1.371 1.24.588 1.81l-3.976 2.888a1 1 0 00-.363 1.118l1.518 4.674c.3.922-.755 1.688-1.538 1.118l-3.976-2.888a1 1 0 00-1.176 0l-3.976 2.888c-.783.57-1.838-.197-1.538-1.118l1.518-4.674a1 1 0 00-.363-1.118l-3.976-2.888c-.784-.57-.38-1.81.588-1.81h4.914a1 1 0 00.951-.69l1.519-4.674z" />
               </svg>
             </button>

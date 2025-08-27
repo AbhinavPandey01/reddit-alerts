@@ -9,7 +9,7 @@ const openai = new OpenAI({
 });
 
 /**
- * Analyze post relevance with simple RAG matching
+ * Analyze post relevance with RAG matching against seed document
  * @param {Object} post - Reddit post object
  * @param {Object} campaign - Campaign object with search_prompt, description, etc.
  * @param {number} ragThreshold - RAG similarity threshold (default 0.6)
@@ -17,7 +17,7 @@ const openai = new OpenAI({
  */
 export async function analyzePostRelevanceWithRAG(post, campaign, ragThreshold = 0.6) {
   try {
-    // Query post against collection (seed + starred matches)
+    // Query post against collection (seed document only)
     const queryResult = await ragService.queryForMatching(campaign.id, post, ragThreshold);
     
     if (!queryResult.success) {

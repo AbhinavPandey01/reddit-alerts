@@ -11,8 +11,11 @@ function PostList({
   onSubredditChange,
   onSortChange,
   onPostSelect, 
+  onStarToggle,
   loading 
 }) {
+  const [starringPosts, setStarringPosts] = React.useState(new Set())
+
   // Sort posts based on sortBy
   const sortedPosts = React.useMemo(() => {
     const sorted = [...posts]
@@ -26,6 +29,28 @@ function PostList({
         return sorted.sort((a, b) => b.relevance_score - a.relevance_score)
     }
   }, [posts, sortBy])
+
+  const toggleStar = async (post, event) => {
+    event.stopPropagation() // Prevent post selection when clicking star
+    
+    if (starringPosts.has(post.id)) return // Already starring this post
+    
+    setStarringPosts(prev => new Set([...prev, post.id]))
+    
+    try {
+      const success = await onStarToggle(post.id, post.is_starred)
+      if (!success) {
+        // Show error message or handle failure
+        alert(`Failed to ${post.is_starred ? 'unstar' : 'star'} post. Please try again.`)
+      }
+    } finally {
+      setStarringPosts(prev => {
+        const newSet = new Set(prev)
+        newSet.delete(post.id)
+        return newSet
+      })
+    }
+  }
 
   const copyAllPosts = () => {
     if (sortedPosts.length === 0) return;
@@ -153,11 +178,22 @@ ${post.content || 'No content'}
                   {post.title}
                 </h3>
                 <div className="flex items-center space-x-2 ml-2">
-                  {post.is_starred && (
-                    <svg className="w-4 h-4 text-yellow-500" fill="currentColor" viewBox="0 0 24 24">
-                      <path d="M11.049 2.927c.3-.921 1.603-.921 1.902 0l1.519 4.674a1 1 0 00.95.69h4.915c.969 0 1.371 1.24.588 1.81l-3.976 2.888a1 1 0 00-.363 1.118l1.518 4.674c.3.922-.755 1.688-1.538 1.118l-3.976-2.888a1 1 0 00-1.176 0l-3.976 2.888c-.783.57-1.838-.197-1.538-1.118l1.518-4.674a1 1 0 00-.363-1.118l-3.976-2.888c-.784-.57-.38-1.81.588-1.81h4.914a1 1 0 00.951-.69l1.519-4.674z" />
+                  <button
+                    onClick={(e) => toggleStar(post, e)}
+                    disabled={starringPosts.has(post.id)}
+                    className={`p-1 rounded-full transition-colors ${
+                      starringPosts.has(post.id) 
+                        ? 'opacity-50 cursor-not-allowed' 
+                        : post.is_starred
+                        ? 'text-yellow-500 hover:text-yellow-600 hover:bg-yellow-50'
+                        : 'text-gray-400 hover:text-yellow-500 hover:bg-yellow-50'
+                    }`}
+                    title={post.is_starred ? 'Unstar this post' : 'Star this post'}
+                  >
+                    <svg className="w-4 h-4" fill={post.is_starred ? 'currentColor' : 'none'} stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11.049 2.927c.3-.921 1.603-.921 1.902 0l1.519 4.674a1 1 0 00.95.69h4.915c.969 0 1.371 1.24.588 1.81l-3.976 2.888a1 1 0 00-.363 1.118l1.518 4.674c.3.922-.755 1.688-1.538 1.118l-3.976-2.888a1 1 0 00-1.176 0l-3.976 2.888c-.783.57-1.838-.197-1.538-1.118l1.518-4.674a1 1 0 00-.363-1.118l-3.976-2.888c-.784-.57-.38-1.81.588-1.81h4.914a1 1 0 00.951-.69l1.519-4.674z" />
                     </svg>
-                  )}
+                  </button>
                   <span className={`px-2 py-1 text-xs rounded-full ${
                     post.relevance_score >= 80 
                       ? 'bg-green-100 text-green-800'

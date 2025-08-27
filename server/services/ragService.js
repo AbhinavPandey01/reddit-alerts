@@ -251,84 +251,7 @@ SEARCH CRITERIA: ${searchCriteria}
   }
 
   /**
-   * Add a starred match to the RAG collection
-   * @param {string} campaignId - Campaign identifier
-   * @param {Object} post - Reddit post object
-   * @param {string} postId - Database post ID
-   * @returns {Promise<{success: boolean, documentId?: string, error?: string}>}
-   */
-  async addStarredMatch(campaignId, post, postId) {
-    try {
-      const collectionName = `campaign_${campaignId}`;
-      const documentId = `starred_${campaignId}_${postId}`;
-      
-      // Create starred match document
-      const starredContent = `
-STARRED MATCH EXAMPLE:
-
-POST TITLE: ${post.title}
-POST CONTENT: ${post.selftext || post.content || 'No content'}
-SUBREDDIT: ${post.subreddit}
-AUTHOR: ${post.author}
-WHY STARRED: User identified this as a high-quality match showing genuine interest or need for the solution
-      `.trim();
-
-      const embedRequest = {
-        collection_name: collectionName,
-        document: {
-          id: documentId,
-          content: starredContent,
-          metadata: {
-            type: 'starred_match',
-            campaign_id: campaignId,
-            post_id: postId,
-            reddit_id: post.reddit_id || post.id,
-            title: post.title,
-            subreddit: post.subreddit,
-            author: post.author,
-            starred_at: new Date().toISOString()
-          }
-        }
-      };
-
-      const response = await fetch(`${this.baseUrl}/api/embed`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(embedRequest),
-        timeout: RAG_TIMEOUT
-      });
-
-      if (!response.ok) {
-        throw new Error(`RAG starred match embed failed: ${response.status} ${response.statusText}`);
-      }
-
-      const result = await response.json();
-      
-      if (result.success) {
-        return { success: true, documentId };
-      } else {
-        return { success: false, error: result.message || 'Unknown starred match embed error' };
-      }
-    } catch (error) {
-      console.error('RAG starred match embed error:', error);
-      return { success: false, error: error.message };
-    }
-  }
-
-  /**
-   * Remove a starred match from the RAG collection
-   * @param {string} campaignId - Campaign identifier
-   * @param {string} ragDocumentId - RAG document ID to remove
-   * @returns {Promise<{success: boolean, error?: string}>}
-   */
-  async removeStarredMatch(campaignId, ragDocumentId) {
-    return await this.deleteDocument(campaignId, ragDocumentId);
-  }
-
-  /**
-   * Query posts against collection (seed + starred matches only)
+   * Query posts against collection (seed document only)
    * @param {string} campaignId - Campaign identifier
    * @param {Object} post - Reddit post to match against
    * @param {number} threshold - Similarity threshold (0.0-1.0)
@@ -366,7 +289,7 @@ AUTHOR: ${post.author.name || post.author}
       const result = await response.json();
       
       if (result.success && result.results.length > 0) {
-        // Check similarity against ALL documents (seed + starred matches)
+        // Check similarity against seed document only
         const maxSimilarity = Math.max(...result.results.map(r => r.score));
         return { 
           success: true, 

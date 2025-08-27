@@ -89,7 +89,7 @@ router.post('/posts/:postId/response', async (req, res) => {
   }
 });
 
-// Star a post (add to RAG collection)
+// Star a post (database only)
 router.post('/posts/:postId/star', async (req, res) => {
   try {
     const { postId } = req.params;
@@ -116,18 +116,10 @@ router.post('/posts/:postId/star', async (req, res) => {
       return res.status(400).json({ error: 'Post already starred' });
     }
     
-    // Add to RAG collection
-    const ragResult = await ragService.addStarredMatch(post.campaign_id, post, postId);
-    
-    if (!ragResult.success) {
-      console.error('Failed to add starred match to RAG:', ragResult.error);
-      return res.status(500).json({ error: 'Failed to add to RAG collection' });
-    }
-    
-    // Save to database
+    // Save to database (removed RAG integration)
     await db.runAsync(
       'INSERT INTO starred_matches (campaign_id, post_id, rag_document_id) VALUES (?, ?, ?)',
-      [post.campaign_id, postId, ragResult.documentId]
+      [post.campaign_id, postId, `starred_${post.campaign_id}_${postId}`]
     );
     
     console.log(`⭐ Post ${postId} starred for campaign ${post.campaign_id}`);
@@ -139,7 +131,7 @@ router.post('/posts/:postId/star', async (req, res) => {
   }
 });
 
-// Unstar a post (remove from RAG collection)
+// Unstar a post (database only)
 router.delete('/posts/:postId/star', async (req, res) => {
   try {
     const { postId } = req.params;
@@ -154,18 +146,7 @@ router.delete('/posts/:postId/star', async (req, res) => {
       return res.status(404).json({ error: 'Post not starred' });
     }
     
-    // Remove from RAG collection
-    const ragResult = await ragService.removeStarredMatch(
-      starredMatch.campaign_id, 
-      starredMatch.rag_document_id
-    );
-    
-    if (!ragResult.success) {
-      console.error('Failed to remove starred match from RAG:', ragResult.error);
-      // Continue with database removal even if RAG fails
-    }
-    
-    // Remove from database
+    // Remove from database (removed RAG integration)
     await db.runAsync('DELETE FROM starred_matches WHERE post_id = ?', [postId]);
     
     console.log(`⭐ Post ${postId} unstarred for campaign ${starredMatch.campaign_id}`);

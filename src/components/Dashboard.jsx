@@ -85,6 +85,38 @@ function Dashboard({ campaign, campaigns, onCampaignSelect, onNewCampaign, onCam
     setSelectedPost(post)
   }
 
+  const handleStarToggle = async (postId, currentStarredState) => {
+    try {
+      if (currentStarredState) {
+        await api.unstarPost(postId)
+      } else {
+        await api.starPost(postId)
+      }
+      
+      // Update the posts array
+      setPosts(prevPosts => 
+        prevPosts.map(post => 
+          post.id === postId 
+            ? { ...post, is_starred: !currentStarredState }
+            : post
+        )
+      )
+      
+      // Update selected post if it's the one being starred
+      if (selectedPost && selectedPost.id === postId) {
+        setSelectedPost(prevPost => ({
+          ...prevPost,
+          is_starred: !currentStarredState
+        }))
+      }
+      
+      return true // Success
+    } catch (error) {
+      console.error('Error toggling star:', error)
+      return false // Failure
+    }
+  }
+
   const handleCampaignUpdate = (updatedCampaign) => {
     // Refresh data after campaign update
     loadData()
@@ -223,6 +255,7 @@ function Dashboard({ campaign, campaigns, onCampaignSelect, onNewCampaign, onCam
                 onSortChange={setSortBy}
                 onPostSelect={handlePostSelect}
                 loading={loading}
+                onStarToggle={handleStarToggle}
               />
             </div>
           </div>
@@ -233,6 +266,7 @@ function Dashboard({ campaign, campaigns, onCampaignSelect, onNewCampaign, onCam
               <PostDetail
                 post={selectedPost}
                 campaign={campaign}
+                onStarToggle={handleStarToggle}
               />
             ) : (
               <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-8 text-center">
